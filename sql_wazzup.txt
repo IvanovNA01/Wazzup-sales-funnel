@@ -1,0 +1,82 @@
+ЗАдача: сколько и каких блоков в среднем находится на сайте в момент оплаты тарифа.
+
+Реализовать точный подсчет блоков при текущей конфигурации БД не возможно - по следующим причинам:
+1)Нажатие на кнопку "добавить" не гарантирует создание блока, так как можно выйти из меню шаблонов блоков, а значит мы не можем привязаться к этому событию. 
+2)Кнопка "сохранить" также не говорит о создании нового блока, так как может быть задействована при нажатии на уже созданный блок, для его изменения.
+3)Комбинация последовательно нажатых кнопок "добавить", "сохранить" так же не гарантирует создание блока (за исключением 1 блока), так как пользователь может 
+вначале нажать "добавить", затем передумать и войти в редактирование старого блока, где нажмет "сохранить".
+4)Решением проблемы неоднозначности было бы создание ивента "изменение кнопки" - в таком случае можно было бы точно разграничить - сохранение с созданием 
+нового блока и изменение старого.
+
+Я реализовал пункт №3, полагая допущение, что пользователь знает что ему нужно и если зашел в меню создания новых блоков, то уже сохранит именно новый.
+Для этого делается проверка предыдущего действия и выбираются только те сохранения которые идут сразу после кнопки "добавить".
+
+-- tab t1 содержит записи о пользователях совершивших покупку, убираем строки не связанные с добавлением блоков и  покупкой
+-- исключаем действия: "переход на лендинг", "регистрация", "клик по ссылке", "копирование ссылки", "изменение фона", "кнопка платеж", "согласованный платеж"
+with t1 as(
+  select distinct localUserId, dateTime, event 
+  from profeat-data-for-assignment
+  where localUserId IN (
+                          Select distinct localUserId 
+                          from profeat-data-for-assignment 
+                          where event = "payment.success"
+                        )
+        AND event NOT IN("landing.unique-visit", "register-confirm-code-success", "editor.link.click", "editor-link.copy.click", "editor-bg.save.click", "payment.attempt", "payment.success")
+  order by dateTime
+),
+-- tab t2 добавляет столбец с предыдущими ивентами для каждого пользователя (по умолчанию кнопка "добавить" для первого действия), отсортировано по времени
+t2 as (
+  Select  localUserId, 
+          dateTime, 
+          event, 
+          LAG(event, 1, "editor.add.click") OVER (Partition by localUserId order by dateTime) as prew_event
+  from t1
+),
+-- tab t3 содержит записи об удаленных и сохраненных, после нажатия кнопки "добавить", блоках  
+-- а также общее для сохранений и удалений поля с именем блока, по которму в дальнейшем будем связывать таблицы
+t3 as (
+  Select  localUserId,  
+          event,
+          CASE
+            when event LIKE '%messengers%' then 'Блок Способы связи'
+            when event LIKE '%socials%' then 'Блок Социальные сети'
+            when event LIKE '%title%' then 'Блок Заголовок'
+            when event LIKE '%description%' then 'Блок Описание'
+            when event LIKE '%button%' then 'Блок Кнопка'
+            when event LIKE '%photos%' then 'Блок Галерея'
+            when event LIKE '%map%' then 'Блок Карта'
+            when event LIKE '%fag%' then 'Блок Вопросы и ответы'
+            when event LIKE '%reviews%' then 'Блок Отзывы'
+            when event LIKE '%products%' then 'Блок Товары'
+            when event LIKE '%main%' then 'Блок Шапка'
+            when event LIKE '%separator%' then 'Блок Разделитель'
+          ELSE 'Иное'
+          END name_event
+  from t2 
+  where prew_event = "editor.add.click" OR event LIKE '%delete.click'
+),
+-- tab t4 содержит количество сохранений по каждому ивенту, для каждого пользователя
+t4 as (
+  Select localUserId, 
+         event,
+         name_event,
+         count(*) as count_save        
+  from t3
+  where event LIKE '%save%'
+  group by  localUserId, event, name_event
+),
+-- tab t5 содержит количество удалений по каждому ивенту, для каждого пользователя
+t5 as (
+  Select localUserId, 
+         event,
+         name_event,
+         count(*) as count_del       
+  from t3
+  where event LIKE '%delete%'
+  group by  localUserId, event, name_event
+)
+-- соединяем таблицы сохраненных и удаленных блоков, используем left join потому как удаления может и не быть (ISNULL на случай пустых значений), при наличии сохранений 
+Select t4.name_event , 
+       AVG(t4.count_save - ISNULL(t5.count_del,0)) as avg_count   
+from t4 left join t5 on t4.localUserId = t5.localUserId and t4.name_event = t5.name_event
+group by t4.name_event
