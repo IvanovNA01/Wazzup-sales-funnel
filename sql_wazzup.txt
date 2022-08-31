@@ -33,7 +33,7 @@ t2 as (
   from t1
 ),
 -- tab t3 содержит записи об удаленных и сохраненных, после нажатия кнопки "добавить", блоках  
--- а также общее для сохранений и удалений поля с именем блока, по которму в дальнейшем будем связывать таблицы
+-- а также общее для сохранений и удалений поле с именем блока, по которому в дальнейшем будем связывать таблицы
 t3 as (
   Select  localUserId,  
           event,
@@ -52,7 +52,7 @@ t3 as (
             when event LIKE '%separator%' then 'Блок Разделитель'
           ELSE 'Иное'
           END name_event
-  from t2 
+  from t2  
   where prew_event = "editor.add.click" OR event LIKE '%delete.click'
 ),
 -- tab t4 содержит количество сохранений по каждому ивенту, для каждого пользователя
@@ -75,7 +75,7 @@ t5 as (
   where event LIKE '%delete%'
   group by  localUserId, event, name_event
 )
--- соединяем таблицы сохраненных и удаленных блоков, используем left join потому как удаления может и не быть (ISNULL на случай пустых значений), при наличии сохранений 
+-- соединяем таблицы сохраненных и удаленных блоков, используем left join потому как удаления может и не быть (ISNULL на случай пустых значений), при наличии сохранений новых блоков.
 Select t4.name_event , 
        AVG(t4.count_save - ISNULL(t5.count_del,0)) as avg_count   
 from t4 left join t5 on t4.localUserId = t5.localUserId and t4.name_event = t5.name_event
